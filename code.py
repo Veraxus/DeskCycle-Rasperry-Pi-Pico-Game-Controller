@@ -16,9 +16,14 @@ keyboard = Keyboard(usb_hid.devices)
 
 
 # Setup switch input
-cycle = digitalio.DigitalInOut(board.GP28)
+cycle = digitalio.DigitalInOut(board.GP16)
 cycle.direction = digitalio.Direction.INPUT
 cycle.pull = digitalio.Pull.DOWN
+
+
+# Setup LED
+led = digitalio.DigitalInOut(board.LED)
+led.direction = digitalio.Direction.OUTPUT
 
 
 # Track last loop time
@@ -30,20 +35,22 @@ trigger_time = time.monotonic()
 holdingW = False
 holdingSHIFT = False
 
+print('Activated!')
 
 while True:
     loop_time = time.monotonic()
     rev_time = loop_time - trigger_time
     
-    
     # Circuit closed!
     if cycle.value:
         trigger_active = True
-        
+        led.value = True
+        #print("Closed circuit! " + str(loop_time))
         
     # Circuit broken! Start actions.
     elif trigger_active == True:
         trigger_active = False
+        led.value = False
         trigger_time = loop_time
         
         if not holdingSHIFT and rev_time <= run_speed:
