@@ -227,7 +227,8 @@ while True:
                 print(f"n2f avg: {avg_near_to_far}")
 
             # The shorter path tells us the direction
-            # Note: The values are consistently backwards and I don't know why. Oh well, I will accept the consistency.
+            # Note: Because of the rotation of the wheel, the paths are traced backwards (counterclockwise), despite
+            # the naming convention used here.
             if avg_near_to_far < avg_far_to_near:
                 rotation_direction = 2
                 if debug == 2:
