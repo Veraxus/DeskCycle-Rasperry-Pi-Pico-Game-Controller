@@ -1,7 +1,7 @@
 """
 File Name: code.py
 Author: Dutch van Andel
-Date: 2024-01-09
+Date: 2024-01-11
 Description:
     This determines the direction and speed of a stationary bike that contains two reed sensors (at approx 75 degrees
     from the main wheel) and two magnets attached to the wheel.
@@ -15,16 +15,19 @@ from adafruit_hid.keycode import Keycode
 
 # == CONFIG VALUES ======================================
 
-debug = False  # 1 = minimal debug, 2 = detailed info, 3 = exhaustive info
+debug = 1  # 1 = minimal debug, 2 = detailed info, 3 = exhaustive info
 
-pedal_sprint_rate = 0.15  # Seconds per interval for sprinting
-pedal_timeout = 0.8  # Seconds without a switch activation before a full stop is assumed
+pedal_sprint_rate = 0.14  # Seconds per interval for sprinting (lower = faster pedaling)
+pedal_timeout = 0.65  # Seconds without a switch deactivation before a full stop is assumed
 
 debounce_time = 0.05  # Delays for switch activation checks since reed switched bounce
 loop_wait_time = 0.01  # Delay in the main loop to conserve power
 
-min_history_length = 2  # The minimum number of transitions to remember for each path before making calculations
-max_history_length = 4  # The max number of transitions to remember for each path
+min_trans_history = 2  # The minimum number of transitions to remember for each path before making calculations
+max_trans_history = 3  # The max number of transitions to remember for each path
+
+min_smoothing = 2  # The minimum number of directions needed to verify direction consistency (1-10)
+max_smoothing = 4  # The max number of directions to check to verify direction consistency (1-10)
 
 # == INITIALIZE BOARD FEATURES ==========================
 
@@ -63,6 +66,8 @@ last_switch = None
 
 # Which way is the wheel turning? (0=stopped, 1=forward, 2=reverse)
 rotation_direction = 0
+# Keep a history of wheel direction to avoid false direction changes when speeds change
+rotation_history = []
 
 # For faster identification of direction changes
 flip_direction = False
@@ -106,10 +111,9 @@ def release_key(keycode):
     # Press the key
     if keycode in active_keys:
         print(f"Released " + keydict[keycode])
-        if not debug:
-            keyboard.release(keycode)
 
     # Track key releases
+    keyboard.release(keycode)
     active_keys.discard(keycode)
 
 
@@ -120,14 +124,35 @@ def release_all_keys():
     global debug, keyboard, active_keys
 
     # Press the key
-    if not debug:
-        keyboard.release_all()
+    keyboard.release_all()
 
     # Track key releases
     active_keys.clear()
 
     # Debug message
     print(f"Released all keys")
+
+
+def check_direction_history( current_direction ):
+    """
+    Checks the current direction against the history. If the results are inconsistent then
+    Args:
+        current_direction (int):
+
+    Returns:
+        boolean
+    """
+
+    if rotation_history and len(rotation_history) >= min_smoothing:
+
+        # If even one thing doesn't match, return false
+        for i in rotation_history[-max_smoothing:]:
+            if i != current_direction:
+                return False
+
+        return True
+
+    return False
 
 
 # == START LOOP =========================================
@@ -159,10 +184,12 @@ while True:
     if far_switch_enabled and not far_switch_is_live:
         # Track interval since the other switch
         if last_switch == 'NEAR':
-            near_to_far_intervals.append(current_time - near_switch_ltime)
+            # Don't add 0 interval for first trigger
+            if near_switch_ltime:
+                near_to_far_intervals.append(current_time - near_switch_ltime)
 
             # Keep history pruned to max
-            if len(near_to_far_intervals) > max_history_length:
+            if len(near_to_far_intervals) > max_trans_history:
                 near_to_far_intervals.pop(0)
 
         # The same switch hit twice means a change in direction
@@ -180,10 +207,12 @@ while True:
     elif near_switch_enabled and not near_switch_is_live:
         # Track interval since the other switch
         if last_switch == 'FAR':
-            far_to_near_intervals.append(current_time - far_switch_ltime)
+            # Don't add 0 interval for first trigger
+            if far_switch_ltime:
+                far_to_near_intervals.append(current_time - far_switch_ltime)
 
             # Keep history pruned to max
-            if len(far_to_near_intervals) > max_history_length:
+            if len(far_to_near_intervals) > max_trans_history:
                 far_to_near_intervals.pop(0)
 
         # The same switch hit twice means a change in direction
@@ -198,8 +227,6 @@ while True:
         if debug == 3:
             print('–– NEAR')
 
-    # todo: Same switch hit twice? Reverse direction.
-
     # == CALCULATE DIRECTION ============================
 
     # Ready to handle switch-related actions
@@ -211,34 +238,51 @@ while True:
             flip_direction = False
             far_to_near_intervals.clear()
             near_to_far_intervals.clear()
-            print('() Flipping direction')
+            if debug == 1:
+                print('() Flipping direction')
 
         # Is there enough history to calculate direction?
-        elif (len(far_to_near_intervals) >= min_history_length
-              and len(near_to_far_intervals) >= min_history_length):
+        elif (len(far_to_near_intervals) >= min_trans_history
+              and len(near_to_far_intervals) >= min_trans_history):
 
             # Calculate averages for each path
-            avg_far_to_near = sum(far_to_near_intervals) / len(far_to_near_intervals)
-            avg_near_to_far = sum(near_to_far_intervals) / len(near_to_far_intervals)
+            min_far_to_near = min(far_to_near_intervals)
+            min_near_to_far = min(near_to_far_intervals)
 
             if debug == 2:
-                print(f"f2n avg: {avg_far_to_near}")
+                print(f"f2n min: {min_far_to_near}")
                 print(' ')
-                print(f"n2f avg: {avg_near_to_far}")
+                print(f"n2f min: {min_near_to_far}")
 
-            # The shorter path tells us the direction
+            # The shorter path tells us the direction!
             # Note: Because of the rotation of the wheel, the paths are traced backwards (counterclockwise), despite
             # the naming convention used here.
-            if avg_near_to_far < avg_far_to_near:
-                rotation_direction = 2
-                if debug == 2:
-                    print('<== Backward')
+
+            # detected possible backward movement
+            if min_near_to_far < min_far_to_near:
+                rotation_history.append(2)
+                # double-check to avoid false changes when speed changes
+                if not len(rotation_history) or check_direction_history(2):
+                    rotation_direction = 2
+                    if debug == 1:
+                        print('<= Backward')
+
+            # Detected possible forward movement
             else:
-                rotation_direction = 1
-                if debug == 2:
-                    print('Forward ==>')
-                # Hold shift to sprint?
-                if avg_far_to_near < pedal_sprint_rate:
+                rotation_history.append(1)
+                # double-check to avoid false changes when speed changes
+                if not len(rotation_history) or check_direction_history(1):
+                    rotation_direction = 1
+                    if debug == 1:
+                        if Keycode.SHIFT in active_keys:
+                            print('Fast Forward ==============>')
+                        else:
+                            print('Forward =>')
+                            
+            # Hold shift to sprint?
+            if len(far_to_near_intervals) and len(near_to_far_intervals):
+                if (min_near_to_far <= pedal_sprint_rate
+                    or min_far_to_near <= pedal_sprint_rate):
                     press_key(Keycode.SHIFT)
                 else:
                     release_key(Keycode.SHIFT)
@@ -251,18 +295,27 @@ while True:
             release_key(Keycode.W)
             press_key(Keycode.S)
 
+    # Prune direction history
+    if len(rotation_history) > 10:
+        rotation_history[:] = rotation_history[10:]
+
     # Detect stoppage
-    if (rotation_direction
+    if ( len(active_keys)
+            and rotation_direction
             and current_time > far_switch_ltime + pedal_timeout
             and current_time > near_switch_ltime + pedal_timeout):
         print('Stopped')
-        rotation_direction = 0
-        far_switch_ltime = 0
-        near_switch_ltime = 0
-        last_switch = None
-        far_to_near_intervals = []
-        near_to_far_intervals = []
         release_all_keys()
+        # Why trash the state? Let's remember it for faster responses!
+        #rotation_history.clear()
+        #rotation_direction = 0
+        #far_switch_ltime = 0
+        #near_switch_ltime = 0
+        #last_switch = None
+        #far_to_near_intervals = []
+        #near_to_far_intervals = []
 
     # Slow down the loop
     time.sleep(loop_wait_time)
+
+
