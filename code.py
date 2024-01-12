@@ -15,7 +15,7 @@ from adafruit_hid.keycode import Keycode
 
 # == CONFIG VALUES ======================================
 
-debug = 1  # 1 = minimal debug, 2 = detailed info, 3 = exhaustive info
+debug = False  # 1 = minimal debug, 2 = detailed info, 3 = exhaustive info
 
 pedal_sprint_rate = 0.14  # Seconds per interval for sprinting (lower = faster pedaling)
 pedal_timeout = 0.65  # Seconds without a switch deactivation before a full stop is assumed
