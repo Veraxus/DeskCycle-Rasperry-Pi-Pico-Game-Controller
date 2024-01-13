@@ -6,16 +6,12 @@ Assumes use of CircuitPython for your Pico ( https://circuitpython.org/board/ras
 
 You will also need the Adafruit CircuitPython HID bundle ( https://github.com/adafruit/Adafruit_CircuitPython_HID )
 
+This version of the code assumes the cycle has been customized with 2 new hall sensors placed approx 3mm apart, and that wheel has had 4 magnets installed. The hall sensors need to be close enough that they both activate when one magnet is between them, but far enough that one can still activate before the other.
+
 ## Wiring
-Use a 3.5mm cable extender. Plug one end into the 3.5mm connector coming out of the Cycle. 
+Either splice the wires from one end of a 3.5mm cable onto each hall sensor (recommend tip for out, ring1 for current, and sleeve for ground), or (what I recommend) solder the sensors to a 3.5mm jack so the cables can be easily replaced in the future.
 
-Next, either use a 3.5mm jack with your Pico for a clean, modular connection, or cut the other end of the 3.5mm cable and separate the internal cables.
+## Explanation
+The placement of the default switches inside the DeskCycle mean that they are effectively (though not literally) positioned at a 90 degree angle from one another. While we can use only two magnets (placed at 180 degrees) and use timing logic to determine wheel direction, it results in less than ideal responsiveness. Four magnets will not work with the default switches, however.
 
-Connect the ground wire to grnd, and then one of the two wires to 3V3 out and the other to GP27 (if you want to use a different pin, you can change it in code.py).
-
-That's it!
-
-## Notes
-The DeskCycle creates a switch connection once per revolution for RPM monitoring. We simply use that to control when the 'W' key is held down or, when the time between rotations is short enough, the "Shift" key as well. 
-
-Because there is only 1 switch in the rotation, the responsiveness (both start and stop) can feel a little sluggish. I'll need to open up the DeskCycle and see how the switch is triggered. With a little luck (I'm hoping it's just a magnetic switch attached to the gear), it may be possible to add more frequent switching, which would allow us to improve the responsiveness.
+This implementation uses hall sensors placed much closer together. This allows the magnet to either trigger one, then both at the same time. When both are triggered at the same time, we can easily tell which direction the wheel turned with a high degree of precision and responsiveness based purely on which of the two was triggered first. This approach also works for four (or even more, if you were so inclined) magnets, which further improves responsiveness.
