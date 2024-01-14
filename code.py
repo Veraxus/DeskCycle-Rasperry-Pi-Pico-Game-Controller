@@ -16,12 +16,18 @@ from adafruit_hid.keycode import Keycode
 # == SETTINGS ===========================================
 
 # -- Resistance Level 3 --
-timeout = 0.40  # (Seconds) Maximum avg interval time before stop is assumed
-sprint_start = 0.16  # (Seconds) Interval where sprint starts
-sprint_end = 0.18  # (Seconds) Interval where sprint ends
-sprint_smoothing = 3  # (Int) The number of intervals to check against when calculating sprint
+min_timeout = 0.39  # (Seconds) The lowest avg interval time before stop is assumed
+max_timeout = 0.8  # (Seconds) The highest avg interval time before stop is assumed
 stop_smoothing = 2  # (Int) The number of intervals to check against when calculating stop
-debug = 1  # 1 = enable debug output, 2 = also disable keypresses
+
+sprint_start = 0.18  # (Seconds) Interval where sprint starts
+sprint_end = 0.2  # (Seconds) Interval where sprint ends
+sprint_smoothing = 3  # (Int) The number of intervals to check against when calculating sprint
+
+debug = 2  # 1 = enable debug output, 2 = verbose debug output, 3 = very verbose
+disable_keyboard = True  # If true, disables keypresses
+
+disable_sprint = False  # Set to true to disable sprint functionality
 
 # == INITIALIZE BOARD FEATURES ==========================
 
@@ -47,7 +53,14 @@ last_switch = None
 
 # The interval timestamps for the last X intervals
 interval_history = []
-max_history = max(stop_smoothing, sprint_smoothing)
+max_history = max(stop_smoothing, sprint_smoothing) + 1
+
+# Tracks the last time activity was detected
+last_activity = time.monotonic()
+inactive_count = 1
+
+# Allows min_timeout to start with first interval number and decrease over time
+smoothed_min_timeout_interval = False
 
 # Set by switch transit to limit certain actions
 actions_ready = False
@@ -73,9 +86,9 @@ def press_key(keycode):
     # Press & track the key
     if keycode not in active_keys:
         if debug:
-            print(f"{time.monotonic()} Pressed " + keydict[keycode])
+            print(f"{time.monotonic()} Pressed {keydict[keycode]}")
         active_keys.add(keycode)
-        if not debug or debug < 2:
+        if not disable_keyboard:
             keyboard.press(keycode)
 
 
@@ -91,10 +104,10 @@ def release_key(keycode):
     # UNpress the key
     if keycode in active_keys:
         if debug:
-            print(f"{time.monotonic()} Released " + keydict[keycode])
+            print(f"{time.monotonic()} Released {keydict[keycode]}")
         active_keys.discard(keycode)
-        
-        if not debug or debug < 2:
+
+        if not disable_keyboard:
             keyboard.release(keycode)
 
 
@@ -104,20 +117,22 @@ def release_all_keys():
     """
     global debug, keyboard, active_keys
 
-    # Press the key
+    # Debug message
+    if debug:
+        keys_str = [keydict[key] for key in active_keys if key in keydict]
+        print(f"{time.monotonic()} Released all keys: {keys_str}")
+
+    # Release the keys
     keyboard.release_all()
 
     # Track key releases
     active_keys.clear()
 
-    # Debug message
-    if debug:
-        print(f"{time.monotonic()} Released all keys")
 
 def get_interval_avg(max_len, current_time):
     """
     Get the average value of the last x history items
-    
+
     Args:
         max_len (int): The maximum number of items to check
     """
@@ -132,56 +147,141 @@ def get_interval_avg(max_len, current_time):
         return avgs
     return 0
 
+
+def full_stop():
+    """
+    Reset state to a complete stop
+    """
+    global smoothed_min_timeout_interval
+    release_all_keys()
+    interval_history.clear()
+    # Reset smoothed interval for next motion start
+    smoothed_min_timeout_interval = False
+
+# == THE LOOP ===========================================
+
+print("Initialized")
+if debug:
+    print(f"Debug level {debug}")
 while True:
     ctime = time.monotonic()
     switch1 = not hall1.value
     switch2 = not hall2.value
-    bothsw = switch1 and switch2
-    eithersw = switch1 or switch2
-    
-    led.value = bothsw
-    
-    if eithersw and not bothsw:
+    both_sw = switch1 and switch2
+    either_sw = switch1 or switch2
+
+    led.value = both_sw
+
+    # Idle notice (useful for debugging)
+    if last_activity and ctime - last_activity > 5:
+        print("{} No motion detected for over {} seconds.".format(ctime, 5 * inactive_count))
+        last_activity = ctime
+        inactive_count += 1
+
+    # Begin sensor-detection logic
+    if either_sw and not both_sw:
         last_switch = 1 if switch1 else 2
-    
-    if bothsw:
+        if debug >= 4:
+            print(f"{ctime} One switch active: {last_switch}")
+
+    if both_sw:
         actions_ready = True
-        if last_switch == 1:
+        if debug >= 4:
+            print(f"{ctime} Both switches active. Actions enabled.")
+
+    # == Ended Sensor Reads - Perform Actions ===========
+    elif actions_ready and not either_sw:
+
+        # Reset action tracking vars
+        actions_ready = False
+        inactive_count = 1
+
+        if debug >= 3:
+            print(f"{ctime} Processing actions!")
+
+        # == Determine Direction ========================
+
+        # Forward - exited sw2 last
+        if last_switch == 2:
             release_key(Keycode.S)
             press_key(Keycode.W)
-            
-        else:
+        # Backward - exited sw1 last
+        elif last_switch == 1:
             release_key(Keycode.W)
             press_key(Keycode.S)
-            
-    elif actions_ready and not eithersw:
-        actions_ready = False
+
         if len(interval_history):
-            
+
+            if debug >= 3:
+                print(f"{ctime} Interval history is {len(interval_history)}, processing direction.")
+
+            # == Determine Speed =============================
+
             # Get average of saved history
             interval_avg = get_interval_avg(sprint_smoothing, ctime)
-            
-            if debug:
-                print(f"{time.monotonic()} Last avg: {interval_avg}")
-            
+
+            if debug >= 2:
+                print(f"{ctime} Interval average: {interval_avg}")
+
             # Calculate sprinting
-            if interval_avg <= sprint_start:
-                press_key(Keycode.SHIFT)
-            elif interval_avg >= sprint_end:
-                release_key(Keycode.SHIFT)
-                
+            if not disable_sprint:
+                if interval_avg <= sprint_start:
+                    press_key(Keycode.SHIFT)
+                    if debug >= 3 and Keycode.SHIFT not in active_keys:
+                        print(f"{ctime} Sprint started.")
+                elif interval_avg >= sprint_end:
+                    release_key(Keycode.SHIFT)
+                    if debug >= 3 and Keycode.SHIFT in active_keys:
+                        print(f"{ctime} Sprint ended.")
+
+            # Set initial smooth min_timeout
+            if not smoothed_min_timeout_interval:
+                smoothed_min_timeout_interval = min(ctime - interval_history[-1], max_timeout)
+                if debug >= 2:
+                    print(f"{ctime} Smoothed timeout interval: {smoothed_min_timeout_interval}")
+
+            # If last interval is higher than current one...
+            elif smoothed_min_timeout_interval > ctime - interval_history[-1]:
+
+                # And current interval is still longer than the min_timeout...
+                if ctime - interval_history[-1] >= min_timeout:
+                    # Then use current interval as latest (decreases naturally)
+                    if debug >= 2:
+                        print(f"{ctime} Lowering min_timeout from {smoothed_min_timeout_interval} to {ctime - interval_history[-1]}")
+                    smoothed_min_timeout_interval = ctime - interval_history[-1]
+
+                # Otherwise, don't go below the min_timeout
+                else:
+                    if debug >= 2 and smoothed_min_timeout_interval != min_timeout:
+                        print(f"{ctime} Reached minimum min_timeout {min_timeout}")
+                        
+                    smoothed_min_timeout_interval = min_timeout
+
+                if debug >= 2 and smoothed_min_timeout_interval != min_timeout:
+                    print(f"{ctime} Smooth min_timeout: {smoothed_min_timeout_interval}")
+
         # Record latest interval
         interval_history.append(ctime)
-        
-    # Determine stop
+        last_activity = ctime
+
+    # == Determine If Stopped ===========================
+    # Get the average intervals within stop smoothing scope
     stop_avg = get_interval_avg(stop_smoothing, ctime)
-    if stop_avg > timeout:
-        
+    # If the average interval is higher than the calculated stop interval....
+    if ((smoothed_min_timeout_interval and stop_avg > smoothed_min_timeout_interval)
+            or (last_activity and ctime - last_activity > max_timeout)):
         if len(active_keys):
-            release_all_keys()
-            
+            full_stop()
+            if debug >= 2:
+                print(f"{ctime} Stop detected! Calculation: {stop_avg} > {smoothed_min_timeout_interval} or {ctime - last_activity} > {max_timeout} ")
+
+    # == Cleanup/Memory Mgmt ============================
     # Prune the history
     if len(interval_history) > max_history:
         interval_history = interval_history[-max_history:]
-        
+
+
+
+
+
 
