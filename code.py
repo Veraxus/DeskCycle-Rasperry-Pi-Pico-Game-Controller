@@ -1,13 +1,14 @@
 """
 File Name: code.py
 Author: Dutch van Andel
-Date: 2024-01-13
+Date: 2024-01-15
 Description:
     This determines the direction and speed of a stationary bike that contains
     two (2) hall sensors placed about 3mm apart and 1 or more magnets.
 """
 import time
 import board
+import analogio
 import digitalio
 import usb_hid
 from adafruit_hid.keyboard import Keyboard
@@ -15,31 +16,33 @@ from adafruit_hid.keycode import Keycode
 
 # == SETTINGS ===========================================
 
+# -- debug --
+debug = 1  # 1 = enable debug output, 2 = verbose debug output, 3 = very verbose
+disable_keyboard = 0  # If true, disables keypresses
+
+# -- sensor calibration --
+analog_threshold = 34100  # At what point does the sensor trigger a true?
+
 # -- Resistance Level 3 --
 min_timeout = 0.39  # (Seconds) The lowest avg interval time before stop is assumed
 max_timeout = 0.8  # (Seconds) The highest avg interval time before stop is assumed
 stop_smoothing = 2  # (Int) The number of intervals to check against when calculating stop
 
 sprint_start = 0.18  # (Seconds) Interval where sprint starts
-sprint_end = 0.2  # (Seconds) Interval where sprint ends
+sprint_end = 0.22  # (Seconds) Interval where sprint ends
 sprint_smoothing = 3  # (Int) The number of intervals to check against when calculating sprint
 
-debug = 2  # 1 = enable debug output, 2 = verbose debug output, 3 = very verbose
-disable_keyboard = True  # If true, disables keypresses
+# -- Game-specific --
+disable_sprint = 0  # Set to true to disable sprint functionality
 
-disable_sprint = False  # Set to true to disable sprint functionality
 
 # == INITIALIZE BOARD FEATURES ==========================
 
 # Bottom switch output (near switch / socket output)
-hall1 = digitalio.DigitalInOut(board.GP15)
-hall1.direction = digitalio.Direction.INPUT
-hall1.pull = digitalio.Pull.UP
+hall1 = analogio.AnalogIn(board.GP26) # ADC0 - row 10 right - grey
 
 # Bottom switch output (near switch / socket output)
-hall2 = digitalio.DigitalInOut(board.GP16)
-hall2.direction = digitalio.Direction.INPUT
-hall2.pull = digitalio.Pull.UP
+hall2 = analogio.AnalogIn(board.GP27)  # ADC1 - row 11 right - white
 
 # Onboard LED
 led = digitalio.DigitalInOut(board.LED)
@@ -88,8 +91,10 @@ def press_key(keycode):
         if debug:
             print(f"{time.monotonic()} Pressed {keydict[keycode]}")
         active_keys.add(keycode)
-        if not disable_keyboard:
-            keyboard.press(keycode)
+
+    # Always force the press, since using WSAD on a different keyboard can supercede cycle input
+    if not disable_keyboard:
+        keyboard.press(keycode)
 
 
 def release_key(keycode):
@@ -158,6 +163,26 @@ def full_stop():
     # Reset smoothed interval for next motion start
     smoothed_min_timeout_interval = False
 
+
+def analog_bool(sensor_value):
+    """
+    Determine if the hall sensor is detecting a magnet. Output is between 0 and 65,536.
+    The default for the 49E/273BD sensors at 3.3V is about 32,500. Exposing the front side
+    of the sensor to a strong neodymium magnet at ~1/2" increases this to 36,000 and a weak
+    magnet to about 34,000 and 1/4".
+    Args:
+        sensor_value (int): The analog value of the sensor.
+
+    Returns (bool):
+        True if the sensor exceeds the threshold, otherwise false
+    """
+    if not sensor_value:
+        return False
+    else:
+        if debug >= 4:
+            print(f"{sensor_value} >= {analog_threshold} | {sensor_value >= analog_threshold}")
+        return sensor_value >= analog_threshold
+
 # == THE LOOP ===========================================
 
 print("Initialized")
@@ -165,15 +190,15 @@ if debug:
     print(f"Debug level {debug}")
 while True:
     ctime = time.monotonic()
-    switch1 = not hall1.value
-    switch2 = not hall2.value
+    switch1 = analog_bool(hall1.value)
+    switch2 = analog_bool(hall2.value)
     both_sw = switch1 and switch2
     either_sw = switch1 or switch2
 
     led.value = both_sw
 
     # Idle notice (useful for debugging)
-    if last_activity and ctime - last_activity > 5:
+    if last_activity and ctime - last_activity > 5 and inactive_count <= 360:
         print("{} No motion detected for over {} seconds.".format(ctime, 5 * inactive_count))
         last_activity = ctime
         inactive_count += 1
@@ -254,7 +279,7 @@ while True:
                 else:
                     if debug >= 2 and smoothed_min_timeout_interval != min_timeout:
                         print(f"{ctime} Reached minimum min_timeout {min_timeout}")
-                        
+
                     smoothed_min_timeout_interval = min_timeout
 
                 if debug >= 2 and smoothed_min_timeout_interval != min_timeout:
@@ -279,9 +304,3 @@ while True:
     # Prune the history
     if len(interval_history) > max_history:
         interval_history = interval_history[-max_history:]
-
-
-
-
-
-

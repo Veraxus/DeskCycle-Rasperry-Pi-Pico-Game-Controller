@@ -6,7 +6,7 @@ Assumes use of CircuitPython for your Pico ( https://circuitpython.org/board/ras
 
 You will also need the Adafruit CircuitPython HID bundle ( https://github.com/adafruit/Adafruit_CircuitPython_HID )
 
-This version of the code assumes the cycle has been customized with 2 new hall sensors placed approx 3mm apart, and that wheel has had 4 magnets installed. The hall sensors need to be close enough that they both activate when one magnet is between them, but far enough that one can still activate before the other.
+This version of the code assumes the cycle has been customized with 2 new hall sensors (49E) placed approx 3mm apart, and that wheel has had 4 magnets installed. The hall sensors need to be close enough that they both activate when one magnet is between them, but far enough that one can still activate before the other.
 
 ## Wiring
 Either splice the wires from one end of a 3.5mm cable onto each hall sensor (recommend tip for out, ring1 for current, and sleeve for ground), or (what I recommend) solder the sensors to a 3.5mm jack so the cables can be easily replaced in the future.
