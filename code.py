@@ -29,8 +29,8 @@ max_timeout = 0.38  # (Seconds) The highest avg interval time before stop is ass
 stop_smoothing = 4  # (Int) The number of intervals to check against when calculating stop
 stop_smoothing_scale = 0.01  # The most a smoothed interval value is allowed to change in one interval
 
-sprint_start = 0.085  # (Seconds) Interval where sprint starts
-sprint_end = 0.11  # (Seconds) Interval where sprint ends
+sprint_start = 0.072  # (Seconds) Interval where sprint starts
+sprint_end = 0.12  # (Seconds) Interval where sprint ends
 sprint_smoothing = 5  # (Int) The number of intervals to check against when calculating sprint start/stop
 
 # -- Game-specific --
@@ -278,13 +278,13 @@ while True:
             # Calculate sprinting
             if not disable_sprint:
                 if interval_avg_sprint <= sprint_start:
+                    if debug >= 1 and Keycode.SHIFT not in active_keys:
+                        print(f"{ctime} Sprint started. ===================> 🏃")
                     press_key(Keycode.SHIFT)
-                    if debug >= 3 and Keycode.SHIFT not in active_keys:
-                        print(f"{ctime} Sprint started.")
                 elif interval_avg_sprint >= sprint_end:
+                    if debug >= 1 and Keycode.SHIFT in active_keys:
+                        print(f"{ctime} Sprint ended. XXXXXXXXXXXXXXXXXXXXXX 🏃")
                     release_key(Keycode.SHIFT)
-                    if debug >= 3 and Keycode.SHIFT in active_keys:
-                        print(f"{ctime} Sprint ended.")
                         
             # Get average of saved history for stop
             interval_avg_stop = get_interval_avg_sprint(stop_smoothing,ctime)
